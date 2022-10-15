@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import warnings
 from datetime import date, datetime, time, timedelta
@@ -4690,6 +4691,31 @@ class SeriesIter:
         self.i = 0
         self.s = s
 
+    # TODO: The actual return type of this function should be:
+    # `Union[Callable[[int], Any], type[NotImplemented]]`, however, the type of `NotImplemented` is
+    # currently not supported (see https://github.com/python/mypy/issues/4791). This should be
+    # fixed in future versions of python, however.
+    @functools.cached_property
+    def idx_fn(self) -> Any:
+        if self.s.dtype in (List, Object):
+            f = get_ffi_func("get_<>", self.s.dtype, self.s._s)
+            if f is None:
+                return NotImplemented
+            # This is just necessary in order to help the type checker realise that f is indeed not
+            # `None` after this point
+            not_none_f = f
+            if self.s.dtype == List:
+
+                def wrapper(i: int) -> Any:
+                    out = not_none_f(i)
+                    if out is None:
+                        return None
+                    return wrap_s(out)
+
+                return wrapper
+            return not_none_f
+        return self.s._s.get_idx
+
     def __iter__(self) -> SeriesIter:
         return self
 
@@ -4697,7 +4723,9 @@ class SeriesIter:
         if self.i < self.len:
             i = self.i
             self.i += 1
-            return self.s[i]
+            if self.idx_fn is NotImplemented:
+                return NotImplemented
+            return self.idx_fn(i)
         else:
             raise StopIteration
 
